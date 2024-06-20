@@ -1,0 +1,11 @@
+[package]
+name = "cli-wrapper"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.86"
+
+[profile.release]
+opt-level = 3
+strip = true
