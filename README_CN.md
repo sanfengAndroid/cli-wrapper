@@ -27,7 +27,7 @@ cargo build --release
 | `-clw-static-link=<arg>`           | 替换链接命令中 `<arg>` 库为静态链接, 它会删除之前所有的 `<arg>` 参数然后再末尾添加 `-Bstatic`, `<arg>`适用于 `ld`/`lld`等链接器             |
 | `-clw-dynamic-link=<arg>`          | 替换链接命令中 `<arg>` 库为动态链接, 它会删除之前所有的 `<arg>` 参数然后再末尾添加 `-Bdynamic`, `<arg>`适用于 `ld`/`lld`等链接器            |
 | `-clw-remove=<arg>`                | 删除所有 `<arg>` 命令行参数                                                                                                                 |
-| `-clw-replace-<before>=<after>`    | 替换命令行所有 `<before>` 参数为<after>                                                                                                     |
+| `-clw-replace-<before>=<after>`    | 替换命令行所有 `<before>` 参数为`<after>`                                                                                                     |
 
 ## 示例
 

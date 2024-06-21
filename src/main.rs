@@ -292,21 +292,21 @@ fn parse_arguments(config: &mut Configuration, key: &str) -> CommandType {
             ))
         }
     } else if let Some(lib) = key.strip_prefix("static-link-compiler=") {
+        CommandType::Command(CommandWrapper(lib.to_string(), None, static_link_feature))
+    } else if let Some(lib) = key.strip_prefix("dynamic-link-compiler=") {
+        CommandType::Command(CommandWrapper(lib.to_string(), None, dynamic_link_feature))
+    } else if let Some(lib) = key.strip_prefix("static-link=") {
         CommandType::Command(CommandWrapper(
             lib.to_string(),
             Some("1".to_string()),
             static_link_feature,
         ))
-    } else if let Some(lib) = key.strip_prefix("dynamic-link-compiler=") {
+    } else if let Some(lib) = key.strip_prefix("dynamic-link=") {
         CommandType::Command(CommandWrapper(
             lib.to_string(),
             Some("1".to_string()),
             dynamic_link_feature,
         ))
-    } else if let Some(lib) = key.strip_prefix("static-link=") {
-        CommandType::Command(CommandWrapper(lib.to_string(), None, static_link_feature))
-    } else if let Some(lib) = key.strip_prefix("dynamic-link=") {
-        CommandType::Command(CommandWrapper(lib.to_string(), None, dynamic_link_feature))
     } else {
         CommandType::Ignore
     }
