@@ -9,3 +9,4 @@ anyhow = "1.0.86"
 [profile.release]
 opt-level = 3
 strip = true
+debug = true
