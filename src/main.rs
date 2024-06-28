@@ -263,6 +263,9 @@ fn parse_arguments(config: &mut Configuration, key: &str) -> CommandType {
     } else if key == "before-print" {
         config.before_print = true;
         CommandType::Flag
+    } else if let Some(command) = key.strip_prefix("command=") {
+        config.command = command.to_string();
+        CommandType::Option
     } else if let Some(dir) = key.strip_prefix("work-dir=") {
         config.work_dir = dir.to_string();
         CommandType::Option
