@@ -18,16 +18,19 @@ cargo build --release
 | 关键字                             | 描述                                                                                                                                        |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `-clw-just-print`                  | 仅打印最终执行的命令,不执行                                                                                                                 |
+| `-clw-before-print`                | 在执行实际命令之前打印最终执行的命令和参数                                                                                                  |
+| `-clw-log-file=<日志文件>`         | 以追加的方式将 `cli-wrapper` 内部的日志重定向到文件                                                                                         |
+| `-clw-command=<命令>`              | 使用 `命令` 替换当前程序执行, 其它参数不变                                                                                                  |
 | `-clw-work-dir=<工作路径>`         | 改变命令执行的工作路径                                                                                                                      |
 | `-clw-redirect-stdout=<文件路径>`  | 重定向 `stdout` 到指定文件, 可以同 `stderr` 重定向相同路径                                                                                  |
 | `-clw-redirect-stderr=<文件路径>`  | 重定向 `stderr` 到指定文件, 可以同 `stdout` 重定向相同路径                                                                                  |
-| `-clw-before-print`                | 在执行实际命令之前打印最终执行的命令和参数                                                                                                  |
+| `-clw-command=<替换命令>`          | 替换执行的命令                                                                                                                              |
+| `-clw-remove=<arg>`                | 删除所有 `<arg>` 命令行参数                                                                                                                 |
+| `-clw-replace-<before>=<after>`    | 替换命令行所有 `<before>` 参数为`<after>`                                                                                                   |
 | `-clw-static-link-compiler=<arg>`  | 替换链接命令中 `<arg>` 库为静态链接, 它会删除之前所有的 `<arg>` 参数然后再末尾添加 `-Wl,-Bstatic`, `-Wl,<arg>`适用于 `gcc`/`clang`等编译器  |
 | `-clw-dynamic-link-compiler=<arg>` | 替换链接命令中 `<arg>` 库为动态链接, 它会删除之前所有的 `<arg>` 参数然后再末尾添加 `-Wl,-Bdynamic`, `-Wl,<arg>`适用于 `gcc`/`clang`等编译器 |
 | `-clw-static-link=<arg>`           | 替换链接命令中 `<arg>` 库为静态链接, 它会删除之前所有的 `<arg>` 参数然后再末尾添加 `-Bstatic`, `<arg>`适用于 `ld`/`lld`等链接器             |
 | `-clw-dynamic-link=<arg>`          | 替换链接命令中 `<arg>` 库为动态链接, 它会删除之前所有的 `<arg>` 参数然后再末尾添加 `-Bdynamic`, `<arg>`适用于 `ld`/`lld`等链接器            |
-| `-clw-remove=<arg>`                | 删除所有 `<arg>` 命令行参数                                                                                                                 |
-| `-clw-replace-<before>=<after>`    | 替换命令行所有 `<before>` 参数为`<after>`                                                                                                     |
 
 ## 示例
 

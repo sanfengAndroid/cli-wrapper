@@ -1,7 +1,8 @@
 use anyhow::Result;
+use simplelog::*;
 use std::collections::HashMap;
 use std::env;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -154,19 +155,22 @@ struct Configuration {
     redirect_stderr: String,
     arguments: Vec<String>,
     response_map: HashMap<String, ResponseFile>,
+    log_file: String,
 }
 
 impl Configuration {
     fn new() -> Configuration {
+        // 部分配置可以从环境变量读取默认值
         Configuration {
-            command: "".to_string(),
+            command: get_string_environment_variable("CLW_OPT_COMMAND"),
             work_dir: "".to_string(),
-            just_print: false,
-            before_print: false,
-            redirect_stdout: "".to_string(),
-            redirect_stderr: "".to_string(),
+            just_print: have_bool_environment_variable("CLW_OPT_JUST_PRINT"),
+            before_print: have_bool_environment_variable("CLW_OPT_BEFORE_PRINT"),
+            redirect_stdout: get_string_environment_variable("CLW_OPT_REDIRECT_STDOUT"),
+            redirect_stderr: get_string_environment_variable("CLW_OPT_REDIRECT_STDERR"),
             arguments: vec![],
             response_map: HashMap::new(),
+            log_file: get_string_environment_variable("CLW_LOG_FILE"),
         }
     }
 
@@ -242,6 +246,18 @@ fn remove_argument_feature(key: String, _: Option<String>, arg: &mut Configurati
     }
 }
 
+fn have_bool_environment_variable(key: &str) -> bool {
+    if let Ok(value) = env::var(key) {
+        let v = value.to_lowercase();
+        return v == "1" || v == "true" || v == "yes" || v == "on";
+    }
+    false
+}
+
+fn get_string_environment_variable(key: &str) -> String {
+    env::var(key).unwrap_or("".to_string())
+}
+
 struct CommandWrapper(
     String,
     Option<String>,
@@ -263,6 +279,9 @@ fn parse_arguments(config: &mut Configuration, key: &str) -> CommandType {
     } else if key == "before-print" {
         config.before_print = true;
         CommandType::Flag
+    } else if let Some(log_file) = key.strip_prefix("log-file=") {
+        config.log_file = log_file.to_string();
+        CommandType::Option
     } else if let Some(command) = key.strip_prefix("command=") {
         config.command = command.to_string();
         CommandType::Option
@@ -316,17 +335,67 @@ fn parse_arguments(config: &mut Configuration, key: &str) -> CommandType {
 }
 
 fn run() -> Result<i32> {
-    if env::args().len() == 1 {
-        eprintln!("No wrapping command specified");
-        return Ok(2);
-    }
-    let prefix = "-clw-";
     let mut config = Configuration::new();
-    config.command = env::args().nth(1).unwrap();
+
+    let exe = env::current_exe()
+        .unwrap()
+        .to_path_buf()
+        .to_string_lossy()
+        .to_string();
+    // 默认可以走替换模式
+
+    if config.command.is_empty() {
+        let command = if let Some(value) = exe.strip_suffix(".exe") {
+            value.to_owned() + "-wrapper.exe"
+        } else {
+            exe.to_owned() + "-wrapper"
+        };
+        if Path::new(&command).exists() {
+            config.command = command;
+        }
+    }
+
+    let prefix = "-clw-";
     let mut commands = vec![];
+    let mut start_index = 1;
+    if config.command.is_empty() {
+        if env::args().len() < 2 {
+            eprintln!("wrapper mode runs but no wrapper command is available");
+            return Ok(1);
+        }
+        config.command = env::args().nth(1).unwrap();
+        start_index = 2;
+    }
+    // 有些命令被驱动时可能没有环境变量,因此再增加配置文件读取,配置文件每一行一个命令
+
+    let config_file_path = if let Some(value) = exe.strip_suffix(".exe") {
+        value.to_owned() + "-clw-config.txt"
+    } else {
+        exe + "-clw-config.txt"
+    };
+
+    let config_file = Path::new(&config_file_path);
+
+    if config_file.exists() {
+        let content = fs::read_to_string(config_file)?.replace("\r\n", "\n");
+        for argument in content.lines() {
+            if let Some(key) = argument.strip_prefix(prefix) {
+                match parse_arguments(&mut config, key) {
+                    CommandType::Command(f) => commands.push(f),
+                    CommandType::Ignore => {
+                        config.arguments.push(argument.to_string());
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // 初始化 log
+    init_log(config.log_file.as_str());
 
     {
-        let mut iter = env::args().skip(2);
+        let mut iter = env::args().skip(start_index);
         while let Some(argument) = iter.next() {
             if let Some(key) = argument.strip_prefix(prefix) {
                 match parse_arguments(&mut config, key) {
@@ -367,7 +436,7 @@ fn run() -> Result<i32> {
     config.replace_response_file()?;
 
     if config.just_print || config.before_print {
-        println!("{} {}", config.command, config.arguments.join(" "));
+        warn!("{} {}", config.command, config.arguments.join(" "));
     }
     if config.just_print {
         return Ok(0);
@@ -403,10 +472,52 @@ fn run() -> Result<i32> {
             code = exit_status.code().unwrap_or(4);
         }
         Err(e) => {
-            eprintln!("Failed to execute command: {}", e);
+            error!("Failed to execute command: {}", e);
         }
     }
     Ok(code)
+}
+
+fn init_log(log_file: &str) {
+    let log_level = get_string_environment_variable("RUST_LOG").to_lowercase();
+    let level = match log_level.as_str() {
+        "off" => LevelFilter::Off,
+        "debug" => LevelFilter::Debug,
+        "info" => LevelFilter::Info,
+        "warn" => LevelFilter::Warn,
+        "error" => LevelFilter::Error,
+        "trace" => LevelFilter::Trace,
+        _ => LevelFilter::Info,
+    };
+
+    if log_file.is_empty() {
+        TermLogger::init(
+            level,
+            Config::default(),
+            TerminalMode::Mixed,
+            ColorChoice::Auto,
+        )
+        .unwrap();
+    } else {
+        CombinedLogger::init(vec![
+            TermLogger::new(
+                level,
+                Config::default(),
+                TerminalMode::Mixed,
+                ColorChoice::Auto,
+            ),
+            WriteLogger::new(
+                level,
+                Config::default(),
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(log_file)
+                    .unwrap(),
+            ),
+        ])
+        .unwrap();
+    }
 }
 
 fn main() {
@@ -415,7 +526,7 @@ fn main() {
             std::process::exit(code);
         }
         Err(e) => {
-            eprintln!("Error: {}", e);
+            error!("Error: {}", e);
             std::process::exit(1);
         }
     };
