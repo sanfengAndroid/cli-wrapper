@@ -202,28 +202,183 @@ impl Drop for Configuration {
     }
 }
 
-fn static_link_feature(key: String, is_linker: Option<String>, arg: &mut Configuration) {
-    if is_linker.is_some() {
-        remove_argument_feature(key.clone(), None, arg);
-        arg.arguments.push("-Bstatic".to_string());
-        arg.arguments.push(key)
+fn change_link_feature(
+    key: String,
+    is_linker: Option<String>,
+    dynamic_link: bool,
+    mut is_dynamic: bool,
+    arguments: &mut Vec<String>,
+    response_map: &mut HashMap<String, ResponseFile>,
+) -> bool {
+    // 更改链接方式但不更改链接顺序, 因为有些情况下链接顺序很重要
+    let (static_key, dynamic_key) = if is_linker.is_some() {
+        ("-Bstatic".to_owned(), "-Bdynamic".to_owned())
     } else {
-        remove_argument_feature("-Wl,".to_string() + &key, None, arg);
-        arg.arguments.push("-Wl,-Bstatic".to_string());
-        arg.arguments.push("-Wl,".to_string() + &key);
+        ("-Wl,-Bstatic".to_owned(), "-Wl,-Bdynamic".to_owned())
+    };
+    let mut i = 0;
+    while i < arguments.len() {
+        let arg = arguments[i].clone();
+        if arg == static_key || arg == "-dn" || arg == "-non_shared" || arg == "-static" {
+            is_dynamic = false;
+        } else if arg == dynamic_key || arg == "-dy" || arg == "-call_shared" {
+            is_dynamic = true;
+        } else if arg == key && is_dynamic != dynamic_link {
+            if dynamic_link {
+                arguments.insert(i, dynamic_key.clone());
+                arguments.insert(i + 2, static_key.clone());
+            } else {
+                arguments.insert(i, static_key.clone());
+                arguments.insert(i + 2, dynamic_key.clone());
+            }
+            i += 2;
+        } else if let Some(path) = arg.strip_prefix("@") {
+            if let Some(res) = response_map.get_mut(path) {
+                let old_size = res.values.len();
+                is_dynamic = change_link_feature(
+                    key.clone(),
+                    is_linker.clone(),
+                    dynamic_link,
+                    is_dynamic,
+                    &mut res.values,
+                    // 不支持嵌套 ResponseFile
+                    &mut HashMap::new(),
+                );
+                if old_size != res.values.len() {
+                    res.changed = true;
+                }
+            }
+        }
+        i += 1;
     }
+    is_dynamic
+}
+
+fn static_link_feature(key: String, is_linker: Option<String>, arg: &mut Configuration) {
+    change_link_feature(
+        key,
+        is_linker,
+        false,
+        true,
+        &mut arg.arguments,
+        &mut arg.response_map,
+    );
 }
 
 fn dynamic_link_feature(key: String, is_linker: Option<String>, arg: &mut Configuration) {
-    if is_linker.is_some() {
-        remove_argument_feature(key.clone(), None, arg);
-        arg.arguments.push("-Bdynamic".to_string());
-        arg.arguments.push(key)
-    } else {
-        remove_argument_feature("-Wl,".to_string() + &key, None, arg);
-        arg.arguments.push("-Wl,-Bdynamic".to_string());
-        arg.arguments.push("-Wl,".to_string() + &key);
+    change_link_feature(
+        key,
+        is_linker,
+        true,
+        true,
+        &mut arg.arguments,
+        &mut arg.response_map,
+    );
+}
+
+fn remove_argument(
+    value: String,
+    before: Option<String>,
+    after: Option<String>,
+    args: &mut Vec<String>,
+    response_map: &mut HashMap<String, ResponseFile>,
+) -> Vec<String> {
+    let mut result: Vec<String> = vec![];
+    let mut i = 0;
+    while i < args.len() {
+        if let Some(path) = args[i].strip_prefix("@") {
+            if let Some(res) = response_map.get_mut(path) {
+                let elements = remove_argument(
+                    value.clone(),
+                    before.clone(),
+                    after.clone(),
+                    &mut res.values,
+                    &mut HashMap::new(),
+                );
+
+                result.append(
+                    &mut elements
+                        .into_iter()
+                        .filter(|item| !result.contains(item))
+                        .collect::<Vec<String>>(),
+                );
+            }
+        } else if args[i].ends_with(&value) {
+            // 通常用于移动静态库/动态库在开头或末尾,因此这里仅匹配结尾字符串
+            if let Some(ref before) = before {
+                if i > 1 && args[i - 1].ends_with(before) {
+                    let lib = args.remove(i);
+                    if !result.contains(&lib) {
+                        result.push(lib);
+                    }
+                    continue;
+                }
+            } else if let Some(ref after) = after {
+                if i < args.len() - 1 && args[i + 1].ends_with(after) {
+                    let lib = args.remove(i);
+                    if !result.contains(&lib) {
+                        result.push(lib);
+                    }
+                }
+            } else {
+                let lib = args.remove(i);
+                if !result.contains(&lib) {
+                    result.push(lib);
+                }
+            }
+        }
+        i += 1;
     }
+    return result;
+}
+
+fn move_to_back_for_before_feature(value: String, before: Option<String>, arg: &mut Configuration) {
+    // 将匹配的指定参数移动到末尾
+    let mut result = remove_argument(
+        value.clone(),
+        before,
+        None,
+        &mut arg.arguments,
+        &mut arg.response_map,
+    );
+    arg.arguments.append(&mut result);
+}
+
+fn move_to_back_for_after_feature(value: String, after: Option<String>, arg: &mut Configuration) {
+    let mut result = remove_argument(
+        value.clone(),
+        None,
+        after,
+        &mut arg.arguments,
+        &mut arg.response_map,
+    );
+    arg.arguments.append(&mut result);
+}
+
+fn move_to_front_for_before_feature(
+    value: String,
+    before: Option<String>,
+    arg: &mut Configuration,
+) {
+    let result = remove_argument(
+        value.clone(),
+        before,
+        None,
+        &mut arg.arguments,
+        &mut arg.response_map,
+    );
+    arg.arguments.splice(0..0, result.into_iter());
+}
+
+fn move_to_front_for_after_feature(value: String, after: Option<String>, arg: &mut Configuration) {
+    let result = remove_argument(
+        value.clone(),
+        None,
+        after,
+        &mut arg.arguments,
+        &mut arg.response_map,
+    );
+    arg.arguments.splice(0..0, result.into_iter());
 }
 
 fn replace_argument_feature(key: String, value: Option<String>, arg: &mut Configuration) {
@@ -256,6 +411,147 @@ fn have_bool_environment_variable(key: &str) -> bool {
 
 fn get_string_environment_variable(key: &str) -> String {
     env::var(key).unwrap_or("".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_move_to_back_feature() {
+        let vec1: Vec<String> = vec![
+            "a0".to_owned(),
+            "prefix-a1".to_owned(),
+            "prefix-a2".to_owned(),
+            "a3".to_owned(),
+            "a1".to_owned(),
+            "a4".to_owned(),
+            "a5".to_owned(),
+        ];
+        let mut config = Configuration::new();
+        config.arguments = vec1.clone();
+        move_to_back_for_after_feature("a1".to_owned(), None, &mut config);
+        assert_eq!(
+            config.arguments,
+            vec![
+                "a0".to_owned(),
+                "prefix-a2".to_owned(),
+                "a3".to_owned(),
+                "a4".to_owned(),
+                "a5".to_owned(),
+                "prefix-a1".to_owned(),
+                "a1".to_owned(),
+            ]
+        );
+
+        config.arguments = vec1.clone();
+        move_to_back_for_after_feature("a1".to_owned(), Some("a2".to_owned()), &mut config);
+        assert_eq!(
+            config.arguments,
+            vec![
+                "a0".to_owned(),
+                "prefix-a2".to_owned(),
+                "a3".to_owned(),
+                "a1".to_owned(),
+                "a4".to_owned(),
+                "a5".to_owned(),
+                "prefix-a1".to_owned(),
+            ]
+        );
+
+        config.arguments = vec1.clone();
+        move_to_back_for_after_feature("a5".to_owned(), Some("after".to_owned()), &mut config);
+        assert_eq!(config.arguments, vec1);
+
+        config.arguments = vec1.clone();
+        move_to_back_for_before_feature("a1".to_owned(), Some("none".to_owned()), &mut config);
+        assert_eq!(config.arguments, vec1);
+
+        move_to_back_for_before_feature("a1".to_owned(), Some("a3".to_owned()), &mut config);
+        assert_eq!(
+            config.arguments,
+            vec![
+                "a0".to_owned(),
+                "prefix-a1".to_owned(),
+                "prefix-a2".to_owned(),
+                "a3".to_owned(),
+                "a4".to_owned(),
+                "a5".to_owned(),
+                "a1".to_owned(),
+            ]
+        );
+        config.arguments = vec1.clone();
+        move_to_back_for_before_feature("a0".to_owned(), Some("before".to_owned()), &mut config);
+        assert_eq!(config.arguments, vec1);
+    }
+
+    #[test]
+    fn test_move_to_before_feature() {
+        let vec1: Vec<String> = vec![
+            "a0".to_owned(),
+            "prefix-a1".to_owned(),
+            "prefix-a2".to_owned(),
+            "a3".to_owned(),
+            "a1".to_owned(),
+            "a4".to_owned(),
+            "a5".to_owned(),
+        ];
+        let mut config = Configuration::new();
+        config.arguments = vec1.clone();
+        move_to_front_for_after_feature("a1".to_owned(), None, &mut config);
+        assert_eq!(
+            config.arguments,
+            vec![
+                "prefix-a1".to_owned(),
+                "a1".to_owned(),
+                "a0".to_owned(),
+                "prefix-a2".to_owned(),
+                "a3".to_owned(),
+                "a4".to_owned(),
+                "a5".to_owned(),
+            ]
+        );
+
+        config.arguments = vec1.clone();
+        move_to_front_for_after_feature("a1".to_owned(), Some("a2".to_owned()), &mut config);
+        assert_eq!(
+            config.arguments,
+            vec![
+                "prefix-a1".to_owned(),
+                "a0".to_owned(),
+                "prefix-a2".to_owned(),
+                "a3".to_owned(),
+                "a1".to_owned(),
+                "a4".to_owned(),
+                "a5".to_owned(),
+            ]
+        );
+
+        config.arguments = vec1.clone();
+        move_to_front_for_after_feature("a5".to_owned(), Some("after".to_owned()), &mut config);
+        assert_eq!(config.arguments, vec1);
+
+        config.arguments = vec1.clone();
+        move_to_front_for_before_feature("a1".to_owned(), Some("none".to_owned()), &mut config);
+        assert_eq!(config.arguments, vec1);
+
+        move_to_front_for_before_feature("a1".to_owned(), Some("a3".to_owned()), &mut config);
+        assert_eq!(
+            config.arguments,
+            vec![
+                "a1".to_owned(),
+                "a0".to_owned(),
+                "prefix-a1".to_owned(),
+                "prefix-a2".to_owned(),
+                "a3".to_owned(),
+                "a4".to_owned(),
+                "a5".to_owned(),
+            ]
+        );
+        config.arguments = vec1.clone();
+        move_to_front_for_before_feature("a0".to_owned(), Some("before".to_owned()), &mut config);
+        assert_eq!(config.arguments, vec1);
+    }
 }
 
 struct CommandWrapper(
@@ -303,13 +599,13 @@ fn parse_arguments(config: &mut Configuration, key: &str) -> CommandType {
     } else if let Some(arg) = key.strip_prefix("replace-") {
         let mut args = arg.splitn(2, '=');
         let before = args.next().unwrap_or("");
-        let after = args.next();
-        if after.is_none() {
+        let after = args.next().unwrap_or("");
+        if before.is_empty() || after.is_empty() {
             CommandType::Ignore
         } else {
             CommandType::Command(CommandWrapper(
                 before.to_string(),
-                Some(after.unwrap().to_string()),
+                Some(after.to_string()),
                 replace_argument_feature,
             ))
         }
@@ -329,6 +625,70 @@ fn parse_arguments(config: &mut Configuration, key: &str) -> CommandType {
             Some("1".to_string()),
             dynamic_link_feature,
         ))
+    } else if let Some(value) = key.strip_prefix("move-front=") {
+        CommandType::Command(CommandWrapper(
+            value.to_string(),
+            None,
+            move_to_front_for_before_feature,
+        ))
+    } else if let Some(value) = key.strip_prefix("move-front-before-") {
+        let mut keys = value.splitn(2, '=');
+        let before = keys.next().unwrap_or("");
+        let value = keys.next().unwrap_or("");
+        if before.is_empty() || value.is_empty() {
+            CommandType::Ignore
+        } else {
+            CommandType::Command(CommandWrapper(
+                value.to_string(),
+                Some(before.to_string()),
+                move_to_front_for_before_feature,
+            ))
+        }
+    } else if let Some(value) = key.strip_prefix("move-front-after-") {
+        let mut keys = value.splitn(2, '=');
+        let after = keys.next().unwrap_or("");
+        let value = keys.next().unwrap_or("");
+        if after.is_empty() || value.is_empty() {
+            CommandType::Ignore
+        } else {
+            CommandType::Command(CommandWrapper(
+                value.to_string(),
+                Some(after.to_string()),
+                move_to_front_for_after_feature,
+            ))
+        }
+    } else if let Some(value) = key.strip_prefix("move-back=") {
+        CommandType::Command(CommandWrapper(
+            value.to_string(),
+            None,
+            move_to_back_for_before_feature,
+        ))
+    } else if let Some(value) = key.strip_prefix("move-back-before-") {
+        let mut keys = value.splitn(2, '=');
+        let before = keys.next().unwrap_or("");
+        let value = keys.next().unwrap_or("");
+        if before.is_empty() || value.is_empty() {
+            CommandType::Ignore
+        } else {
+            CommandType::Command(CommandWrapper(
+                value.to_string(),
+                Some(before.to_string()),
+                move_to_back_for_before_feature,
+            ))
+        }
+    } else if let Some(value) = key.strip_prefix("move-back-after-") {
+        let mut keys = value.splitn(2, '=');
+        let after = keys.next().unwrap_or("");
+        let value = keys.next().unwrap_or("");
+        if after.is_empty() || value.is_empty() {
+            CommandType::Ignore
+        } else {
+            CommandType::Command(CommandWrapper(
+                value.to_string(),
+                Some(after.to_string()),
+                move_to_back_for_after_feature,
+            ))
+        }
     } else {
         CommandType::Ignore
     }
@@ -342,8 +702,8 @@ fn run() -> Result<i32> {
         .to_path_buf()
         .to_string_lossy()
         .to_string();
-    // 默认可以走替换模式
 
+    // 默认可以走替换模式
     if config.command.is_empty() {
         let command = if let Some(value) = exe.strip_suffix(".exe") {
             value.to_owned() + "-wrapper.exe"
@@ -366,8 +726,8 @@ fn run() -> Result<i32> {
         config.command = env::args().nth(1).unwrap();
         start_index = 2;
     }
-    // 有些命令被驱动时可能没有环境变量,因此再增加配置文件读取,配置文件每一行一个命令
 
+    // 有些命令被驱动时可能没有环境变量,因此再增加配置文件读取,配置文件每一行一个命令
     let config_file_path = if let Some(value) = exe.strip_suffix(".exe") {
         value.to_owned() + "-clw-config.txt"
     } else {
@@ -523,7 +883,9 @@ fn init_log(log_file: &str) {
 fn main() {
     match run() {
         Ok(code) => {
-            std::process::exit(code);
+            if code != 0 {
+                std::process::exit(code);
+            }
         }
         Err(e) => {
             error!("Error: {}", e);
