@@ -1,3 +1,9 @@
+## v0.2.0 (2024-09-14)
+
+### Feat
+
+- optimize dynamic and static links, add move argument feature
+
 ## v0.1.3 (2024-09-01)
 
 ### Feat
