@@ -859,23 +859,15 @@ fn init_log(log_file: &str) {
         )
         .unwrap();
     } else {
-        CombinedLogger::init(vec![
-            TermLogger::new(
-                level,
-                Config::default(),
-                TerminalMode::Mixed,
-                ColorChoice::Auto,
-            ),
-            WriteLogger::new(
-                level,
-                Config::default(),
-                OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(log_file)
-                    .unwrap(),
-            ),
-        ])
+        CombinedLogger::init(vec![WriteLogger::new(
+            level,
+            Config::default(),
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_file)
+                .unwrap(),
+        )])
         .unwrap();
     }
 }

@@ -1,10 +1,10 @@
 [package]
 name = "cli-wrapper"
-version = "0.1.3"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0.86"
+anyhow = "1.0.93"
 simplelog = { version = "^0.12.2", features = ["paris"] }
 
 [profile.release]
